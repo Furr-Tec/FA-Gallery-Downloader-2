@@ -959,6 +959,23 @@ export async function getAllSubmissionsForUser(username) {
     throw error;
   }
 }
+
+/**
+ * Retrieves existing submission links for a given user and category (Gallery or Scraps).
+ * 
+ * @param {String} username 
+ * @param {Boolean} isScraps 
+ * @returns {Promise<Array>} Array of URLs
+ */
+export function getExistingLinks(username, isScraps = false) {
+  return db.all(`
+    SELECT url 
+    FROM subdata
+    WHERE username = ?
+    AND is_scrap = ?
+  `, [username, isScraps]);
+}
+
 /**
  * 
  * @returns {Promise<Array>} All submission data in the database
@@ -988,9 +1005,12 @@ export function getSubmissionOwner(url) {
 }
 export function getAllInvalidFiles() {
   return db.all(`
+<<<<<<< Updated upstream
     SELECT id, content_name, content_url, username, account_name, url
     FROM subdata
     WHERE content_name LIKE '%.'
+=======
+>>>>>>> Stashed changes
     AND is_content_saved = 1
   `);
 }

@@ -4,7 +4,11 @@ import * as db from './database-interface.js';
 import { logProgress, waitFor, getHTML, stop, sendStartupInfo } from './utils.js';
 import fs from 'fs-extra';
 import { join } from 'node:path';
+<<<<<<< Updated upstream
 import { DOWNLOAD_DIR as downloadDir } from './constants.js';
+=======
+
+>>>>>>> Stashed changes
 const scrapeID = 'scrape-div';
 const progressID = 'data';
 const maxRetries = 6;
@@ -77,6 +81,8 @@ async function isSubmissionProcessed(submissionUrl, username) {
 
 export async function getSubmissionLinks({ url, username, isScraps = false, isFavorites = false }) {
   let dirName = (isFavorites) ? 'favorites': (isScraps) ? 'scraps' : 'gallery';
+  const baseDir = join('fa_gallery_downloader', username.toLowerCase(), dirName);
+  await fs.ensureDir(baseDir); // Ensure directory exists
   const divID = `${scrapeID}${isScraps ? '-scraps':''}`;
   let currPageCount = 1;
   let currLinks = 0;
@@ -109,6 +115,7 @@ export async function getSubmissionLinks({ url, username, isScraps = false, isFa
       // console.log(`[Data] Found ${currPageCount} pages of submissions!`, divID);
       break;
     }
+<<<<<<< Updated upstream
     
     // Filter out submissions that are already processed
     let filteredLinks = [];
@@ -137,11 +144,22 @@ export async function getSubmissionLinks({ url, username, isScraps = false, isFa
     // Save the filtered links to the database
     await db.saveLinks(filteredLinks, isScraps, username).catch(() => stopLoop = true);
     
+=======
+    // Check which links are new by cross-referencing the database
+    const existingLinks = await db.getExistingLinks(username, isScraps);
+    const linksToDownload = newLinks.filter(link => !existingLinks.includes(link));
+
+    if (linksToDownload.length > 0) {
+      await db.saveLinks(linksToDownload, isScraps, username).catch(() => stopLoop = true);
+    }
+
+>>>>>>> Stashed changes
     if (stopLoop || stop.now) {
       console.log('[Data] Stopped early!');
       logProgress.reset(progressID);
       break;
     }
+<<<<<<< Updated upstream
     
     // For favorites, save the relationship between user and submission
     if (isFavorites && username) {
@@ -162,6 +180,10 @@ export async function getSubmissionLinks({ url, username, isScraps = false, isFa
       }
     }
     currLinks = currLinks += newLinks.length;
+=======
+    if (isFavorites && username) await db.saveFavorites(username, linksToDownload);
+    currLinks = currLinks += linksToDownload.length;
+>>>>>>> Stashed changes
     currPageCount++;
     if (isFavorites) {
       nextPage = $(`.pagination a.right`).attr('href');

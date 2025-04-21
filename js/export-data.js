@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import fs from 'fs-extra';
 import { scrapeSubmissionInfo } from './scrape-data.js';
 import { startUserContentDownloads } from './download-content.js';
-import { DOWNLOAD_DIR, EXPORT_DIR } from './constants.js';
+import { ARTIST_DIR, EXPORT_DIR } from './constants.js';
 import { stop } from './utils.js';
 import * as db from './database-interface.js'
 
@@ -22,7 +22,7 @@ function constructJSON(d, includeDate = true) {
 }
 async function exportData(name, includeDate) {
   name = name.toLowerCase();
-  const dirPath = join(EXPORT_DIR, name);
+  const destRoot = EXPORT_DIR || join(ARTIST_DIR, 'exports');
   const inNeedOfRepair = await db.needsRepair(name);
   const needsDownload = await db.getAllUnsavedContent(name);
   if (inNeedOfRepair.length) 
@@ -35,7 +35,7 @@ async function exportData(name, includeDate) {
     startUserContentDownloads(needsDownload)
   ]);
   if (stop.now) return console.log(`[Data] User account export aborted`);
-  const allUserData = await db.getAllSubmissionsForUser(name);
+  const basedir = join(ARTIST_DIR, username);
   if (!allUserData.length) return console.log(`[Data] No submissions to export: ${name}`);
   console.log(`[Data] Exporting ${allUserData.length} submissions for account: ${name}`);
   // Delete old exports!

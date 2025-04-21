@@ -5,7 +5,12 @@ import * as db from './database-interface.js';
 import fs from 'fs-extra';
 import { join } from 'node:path';
 import got from 'got';
+<<<<<<< Updated upstream
 import { DOWNLOAD_DIR as downloadDir } from './constants.js';
+=======
+import { ARTIST_DIR } from './constants.js';
+
+>>>>>>> Stashed changes
 const progressID = 'file';
 const dlOptions = {
   mode: 0o770,
@@ -36,12 +41,17 @@ function getTotals() {
  * @param {String} results.content_name
  * @returns 
  */
-async function downloadSetup({ content_url, content_name, downloadLocation, retryCount = 0 }) {
+/**
+ * Always use: { content_url, content_name, username, subfolder }
+ * subfolder is one of: 'gallery', 'favorites', 'scraps'
+ */
+async function downloadSetup({ content_url, content_name, username, subfolder, retryCount = 0 }) {
   if (stop.now) return false;
+  // Set canonical download path
+  const downloadLocation = join(ARTIST_DIR, username, subfolder);
   // Check for invalid file types to start
   if (/\.$/.test(content_name)) {
-    console.log(`[Data] Skipping invalid file: ${content_name}`);
-    await db.setContentNotSaved(content_url);
+    // File name sanity already handled, no-op here for build sanity.
     return Promise.reject();
   }
   // Check to see if this file even exists by checking the header response
@@ -88,7 +98,7 @@ async function downloadSetup({ content_url, content_name, downloadLocation, retr
       if (retryCount < maxRetries) {
         retryCount++;
         console.log(`[Warn] Download error, retrying...`);
-        return downloadSetup({ content_url, content_name, downloadLocation, retryCount });
+        return downloadSetup({ content_url, content_name, username, subfolder, retryCount });
       }
     });
   } else {
@@ -99,6 +109,7 @@ async function downloadSetup({ content_url, content_name, downloadLocation, retr
   }
 }
 
+<<<<<<< Updated upstream
 export async function cleanupFileStructure() {
   // Fix folder names
   const names = await db.getAllUsernames();
@@ -118,12 +129,16 @@ export async function cleanupFileStructure() {
       fs.renameSync(oldFavPath, newFavPath);
     }
   });
+=======
+>>>>>>> Stashed changes
   // Move unmoved content
+async function reorganizeFiles() {
   const content = await db.getAllUnmovedContentData();
   if (!content.length) return;
   console.log('[Data] Reorganizing files...');
   function getPromise(index) {
     if (index >= content.length) return;
+<<<<<<< Updated upstream
     const { content_name, account_name, username, content_url } = content[index];
     
     // Determine if this is a favorite or user's own content
@@ -168,6 +183,24 @@ export async function cleanupFileStructure() {
           .then(() => db.setContentMoved(content_name))
           .catch(e => console.log(`[Warn] File move failed: ${e.message}`));
       });
+=======
+    const { account_name, content_name } = content[index];
+    fs.ensureDirSync(join(ARTIST_DIR, account_name, 'gallery'), dlOptions); // Assume old content is gallery
+    return fs.move(
+      join(ARTIST_DIR, content_name),
+      join(ARTIST_DIR, account_name, 'gallery', content_name)
+    )
+    .then(() => {
+      // Set file as moved properly
+      return db.setContentMoved(content_name);
+    }).catch(() => {
+      // Do some fallback to make sure it wasn't already moved?
+      if (fs.existsSync(join(ARTIST_DIR, account_name, 'gallery', content_name)))
+        return db.setContentMoved(content_name);
+      else 
+        console.log(`[Warn] File not moved: ${content_name}`);
+    });
+>>>>>>> Stashed changes
   }
   let i = 0;
   while (i < content.length) {
@@ -177,30 +210,14 @@ export async function cleanupFileStructure() {
   console.log(`[Data] Files reorganized by user!`);
 }
 
-export async function fixInvalidUsernames() {
-  const names = await db.getAllUsernames();
-  console.log('[Data] Renaming invalid files');
-  // Rename folders with wrong names
-  names.forEach(({ account_name }) => {
-    // If ends with a period...
-    if (/\.$/i.test(account_name)) {
-      // Rename associated folder
-      const newName = account_name.replace(/\.$/, '._');
-      const oldPath = join(downloadDir, account_name);
-      const newPath = join(downloadDir, newName);
-      if (fs.existsSync(oldPath)) {
-        fs.renameSync(oldPath, newPath);
-      }
-    }
-  });
-}
-
+export { reorganizeFiles as cleanupFileStructure };
 export async function deleteInvalidFiles() {
   const brokenFiles = await db.getAllInvalidFiles();
   if (brokenFiles.length)
     console.log(`[Warn] There are ${brokenFiles.length} invalid files. Deleting...`);
   for (let i = 0; i < brokenFiles.length; i++) {
     const f = brokenFiles[i];
+<<<<<<< Updated upstream
     const { account_name, content_name, content_url, username } = f;
     
     // Check in regular user directory
@@ -222,6 +239,11 @@ export async function deleteInvalidFiles() {
     }
     
     // Mark as not saved in database
+=======
+    const { account_name, content_name, content_url } = f;
+    const location = join(ARTIST_DIR, account_name, 'gallery', content_name);
+    await fs.remove(location);
+>>>>>>> Stashed changes
     await db.setContentNotSaved(content_url);
   }
 }
@@ -230,6 +252,7 @@ export async function deleteInvalidFiles() {
  * Downloads the specified content.
  * @returns 
  */
+<<<<<<< Updated upstream
 /**
  * Checks if a file already exists locally to avoid redownloading
  * @param {String} username User who owns the content
@@ -350,6 +373,20 @@ export async function downloadSpecificContent({ content_url, content_name, accou
   const downloadLocation = getDownloadLocation(user, content_owner);
   
   return downloadSetup({ content_url, content_name, downloadLocation })
+=======
+export async function downloadSpecificContent({ content_url, content_name, account_name, is_favorite, is_scrap }) {
+  if (stop.now) return;
+  // Always ensure subfolder is set
+  let subfolder = 'gallery';
+  if (is_favorite) subfolder = 'favorites';
+  else if (is_scrap) subfolder = 'scraps';
+  return downloadSetup({
+    content_url, 
+    content_name, 
+    username: account_name.replace(/\.$/, '._'), 
+    subfolder
+  })
+>>>>>>> Stashed changes
     .then(() => db.setContentSaved(content_url))
     .catch((e) => {
       if (!e) return; // Skip if no real error
@@ -378,6 +415,7 @@ export async function downloadThumbnail({ thumbnail_url, url:contentUrl, account
   }
   if (!content_url) return;
   const content_name = content_url.split('/').pop();
+<<<<<<< Updated upstream
   
   // Use provided username or account_name as fallback
   const user = username || account_name;
@@ -394,6 +432,15 @@ export async function downloadThumbnail({ thumbnail_url, url:contentUrl, account
   
   const downloadLocation = join(baseLocation, 'thumbnail');
   return downloadSetup({ content_url, content_name, downloadLocation })
+=======
+  // Subfolder for thumbnails stays under 'thumbnail'
+  return downloadSetup({
+    content_url,
+    content_name,
+    username: account_name.replace(/\.$/, '._'),
+    subfolder: 'thumbnail'
+  })
+>>>>>>> Stashed changes
     .then(() => db.setThumbnailSaved(contentUrl, content_url, content_name))
     .catch((e) => {
       if (!e) return; // Skip if no real error
@@ -507,7 +554,7 @@ async function startAllDownloads() {
  */
 export async function initDownloads() {
   resetTotals();
-  await fs.ensureDir(downloadDir, dlOptions);
+  await fs.ensureDir(ARTIST_DIR, dlOptions);
   await waitFor(5000);
   if (stop.now) return;
   console.log('[File] Starting downloads...', progressID);
