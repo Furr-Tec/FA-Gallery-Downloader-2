@@ -2,7 +2,9 @@ import random from 'random';
 import { FA_URL_BASE } from './constants.js';
 import * as db from './database-interface.js';
 import { logProgress, waitFor, getHTML, stop, sendStartupInfo } from './utils.js';
-
+import fs from 'fs-extra';
+import { join } from 'node:path';
+import { DOWNLOAD_DIR as downloadDir } from './constants.js';
 const scrapeID = 'scrape-div';
 const progressID = 'data';
 const maxRetries = 6;
@@ -12,11 +14,73 @@ const maxRetries = 6;
  * @param {String} url Gallery URL
  * @param {Boolean} isScraps Is this the scraps folder or not?
  */
+/**
+ * Checks if a submission already exists in the database to avoid duplicate downloads
+ * @param {String} submissionUrl The URL of the submission to check
+ * @param {String} username The username downloading the content
+ * @returns {Promise<Boolean>} True if this submission is already processed
+ */
+async function isSubmissionProcessed(submissionUrl, username) {
+  if (!submissionUrl) return false;
+  
+  // Ensure db is initialized
+  if (!db) {
+    console.error('Database is not initialized');
+    return false;
+  }
+  
+  try {
+    // Use getSubmissionOwner function to check if submission exists in database
+    const existingSubmission = await db.getSubmissionOwner(submissionUrl);
+    
+    if (!existingSubmission) {
+      return false;
+    }
+    
+    // Need to check if content is saved
+    // Since we don't have direct access to is_content_saved in getSubmissionOwner,
+    // we'll need to do an additional check
+    try {
+      const submissions = await db.getAllSubmissionsForUser(existingSubmission.username || existingSubmission.account_name);
+      const matchingSubmission = submissions.find(sub => 
+        sub.url === submissionUrl || sub.content_url === submissionUrl
+      );
+      
+      // If we don't have this submission in the database, it's not processed
+      if (!matchingSubmission) return false;
+      
+      // If it's in the database but content isn't saved yet, it's not fully processed
+      if (!matchingSubmission.is_content_saved) return false;
+    
+      // Check if the actual file exists on disk
+      if (matchingSubmission.content_name && username) {
+        const userDir = join(downloadDir, username.replace(/\.$/, '._'));
+        const regularPath = join(userDir, matchingSubmission.content_name);
+        const favoritesPath = join(userDir, `${username}_Favorites`, matchingSubmission.content_name);
+        
+        // If file exists in either location, it's processed
+        if (fs.existsSync(regularPath) || fs.existsSync(favoritesPath)) {
+          return true;
+        }
+      }
+    } catch (innerError) {
+      console.error('Error checking submission status:', innerError);
+      // Continue with the process even if this check fails
+    }
+  } catch (error) {
+    console.error('Error checking if submission is processed:', error);
+    return false;
+  }
+  
+  return false;
+}
+
 export async function getSubmissionLinks({ url, username, isScraps = false, isFavorites = false }) {
   let dirName = (isFavorites) ? 'favorites': (isScraps) ? 'scraps' : 'gallery';
   const divID = `${scrapeID}${isScraps ? '-scraps':''}`;
   let currPageCount = 1;
   let currLinks = 0;
+  let newLinks = 0;
   let stopLoop = false;
   let nextPage = ''; // Only valid if in favorites!
   console.log(`[Data] Searching user ${dirName} for submission links...`, divID);
@@ -38,19 +102,65 @@ export async function getSubmissionLinks({ url, username, isScraps = false, isFa
     }
     retryCount = 0;
     // Check for content
-    let newLinks = Array.from($('figcaption a[href^="/view"]'))
+    let scrapedLinks = Array.from($('figcaption a[href^="/view"]'))
       .map((div) => FA_URL_BASE + div.attribs.href);
-    if (!newLinks.length) {
+      
+    if (!scrapedLinks.length) {
       // console.log(`[Data] Found ${currPageCount} pages of submissions!`, divID);
       break;
     }
-    await db.saveLinks(newLinks, isScraps, username).catch(() => stopLoop = true);
+    
+    // Filter out submissions that are already processed
+    let filteredLinks = [];
+    for (const link of scrapedLinks) {
+      if (!(await isSubmissionProcessed(link, username))) {
+        filteredLinks.push(link);
+      }
+    }
+    
+    // Update counters
+    newLinks += filteredLinks.length;
+    
+    // If we're filtering and have no new links, still count the page but process next
+    if (filteredLinks.length === 0) {
+      console.log(`[Data] No new submissions found on page ${currPageCount}, checking next page...`);
+      currPageCount++;
+      if (isFavorites) {
+        nextPage = $(`.pagination a.right`).attr('href');
+        if (nextPage) nextPage = url.split('/favorite')[0] + nextPage;
+        else break;
+      }
+      await waitFor(random.int(1000, 2500));
+      continue;
+    }
+    
+    // Save the filtered links to the database
+    await db.saveLinks(filteredLinks, isScraps, username).catch(() => stopLoop = true);
+    
     if (stopLoop || stop.now) {
       console.log('[Data] Stopped early!');
       logProgress.reset(progressID);
       break;
     }
-    if (isFavorites && username) await db.saveFavorites(username, newLinks);
+    
+    // For favorites, save the relationship between user and submission
+    if (isFavorites && username) {
+      await db.saveFavorites(username, filteredLinks);
+      
+      // Also set a flag to indicate these are favorites
+      for (const link of filteredLinks) {
+        try {
+          // Mark in database this is a favorite of username
+          // Use saveMetaData function instead of direct db.run
+          await db.saveMetaData(link, {
+            is_favorite: 1,
+            favorite_username: username
+          });
+        } catch (error) {
+          console.log(`[Error] Failed to mark favorite: ${error.message}`);
+        }
+      }
+    }
     currLinks = currLinks += newLinks.length;
     currPageCount++;
     if (isFavorites) {
@@ -60,7 +170,10 @@ export async function getSubmissionLinks({ url, username, isScraps = false, isFa
     }
     await waitFor(random.int(1000, 2500));
   }
-  if (!stop.now) console.log(`[Data] ${currLinks} submissions found!`);
+  if (!stop.now) {
+    const skippedLinks = currLinks - newLinks;
+    console.log(`[Data] ${currLinks} submissions found, ${newLinks} new submissions to download, ${skippedLinks} already downloaded`);
+  }
   logProgress.reset(progressID);
   await sendStartupInfo();
 }
@@ -172,6 +285,8 @@ export async function scrapeSubmissionInfo({ data = null, downloadComments }) {
       thumbnail_url: $('.page-content-type-text, .page-content-type-music').find('#submissionImg').attr('src') || '',
       rating: $('.rating .rating-box').first().text().trim(),
       category: $('.info.text > div > div').text().trim(),
+      // Track ownership info for proper file organization
+      content_owner: username,
     };
     // Test to fix FA url weirdness
     if (!/^https/i.test(data.content_url)) data.content_url = 'https:' + data.content_url;
